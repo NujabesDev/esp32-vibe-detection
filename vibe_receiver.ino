@@ -42,8 +42,8 @@ VibePacket lastPacket;
 unsigned long lastReceiveTime = 0;
 unsigned long packetCount = 0;
 
-// ESP-NOW receive callback
-void onDataRecv(const uint8_t *mac_addr, const uint8_t *data, int data_len) {
+// ESP-NOW receive callback (compatible with both old and new ESP-IDF versions)
+void onDataRecv(const esp_now_recv_info_t *recv_info, const uint8_t *data, int data_len) {
   // Verify packet size
   if (data_len != sizeof(VibePacket)) {
     Serial.println("ERROR: Received packet size mismatch");
@@ -58,7 +58,7 @@ void onDataRecv(const uint8_t *mac_addr, const uint8_t *data, int data_len) {
   // Print sender MAC address
   Serial.print("From: ");
   for (int i = 0; i < 6; i++) {
-    Serial.printf("%02X", mac_addr[i]);
+    Serial.printf("%02X", recv_info->src_addr[i]);
     if (i < 5) Serial.print(":");
   }
   Serial.print(" | Packet #");
