@@ -15,7 +15,7 @@
  * - FFT frequency analysis (512-point)
  * - Frequency band detection (Bass, Mids, Highs)
  * - Adaptive min/max tracking (auto-calibrates to room)
- * - Vibe state classification (SILENT/AMBIENT/CONVERSATION/MUSIC/PARTY)
+ * - Vibe state classification (SILENT/AMBIENT/CONVERSATION/ACTIVE/PARTY)
  * - Trend detection (getting louder/quieter)
  * - Data packet generation for ESP-NOW/I2C transmission
  *
@@ -26,7 +26,10 @@
  * - Prevents scale collapse with minimum range enforcement
  *
  * Vibe Detection:
- * - Classifies room state based on loudness and frequency distribution
+ * - Classifies room activity/occupancy for student spaces
+ * - Two-axis detection: volume level + speech presence (mids analysis)
+ * - States: SILENT (empty), AMBIENT (background), CONVERSATION (talking),
+ *   ACTIVE (rowdy/energetic), PARTY (very loud)
  * - Outputs 6-byte packet: dB%, bass%, mids%, highs%, vibe_state, delta
  * - Ready for ESP-NOW transmission to other ESP32s
  * - Can be forwarded via I2C to Arduinos for LED/servo/display control
@@ -92,9 +95,9 @@ ArduinoFFT<double> FFT = ArduinoFFT<double>(vReal, vImag, FFT_SIZE, SAMPLING_FRE
 enum VibeState {
   SILENT = 0,      // Very quiet, minimal activity
   AMBIENT = 1,     // Background noise, no distinct activity
-  CONVERSATION = 2,// Mid-range dominant (speech)
-  MUSIC = 3,       // Balanced spectrum with bass/highs
-  PARTY = 4        // High energy, bass dominant, loud
+  CONVERSATION = 2,// Speech detected (mids dominant)
+  ACTIVE = 3,      // Loud/energetic but not speech-heavy
+  PARTY = 4        // Very loud, high energy
 };
 
 // Data packet for transmission (ESP-NOW → I2C)
@@ -476,6 +479,7 @@ void printMiniBar(float energy, float min_energy, float max_energy) {
 }
 
 // Detect vibe state based on dB level and frequency distribution
+// Uses two-axis approach: volume (relative_db) + speech detection (mids_ratio)
 VibeState detectVibe(float db, float bass, float mids, float highs,
                      float db_min, float db_max) {
   // Calculate relative loudness (0.0 to 1.0+ in adaptive range)
@@ -486,43 +490,50 @@ VibeState detectVibe(float db, float bass, float mids, float highs,
 
   // Calculate frequency distribution ratios
   float total_energy = bass + mids + highs;
-  float bass_ratio = 0, mids_ratio = 0, highs_ratio = 0;
+  float mids_ratio = 0;
 
   if (total_energy > 0) {
-    bass_ratio = bass / total_energy;
     mids_ratio = mids / total_energy;
-    highs_ratio = highs / total_energy;
   }
 
-  // Classification logic
-  // SILENT: Very quiet, bottom 15% of range
+  // Two-axis classification:
+  // Axis 1: How loud is it? (relative_db)
+  // Axis 2: Is it speech? (mids_ratio > 0.35)
+
+  // SILENT: Empty/very quiet
   if (relative_db < 0.15 || db < 40) {
     return SILENT;
   }
 
-  // AMBIENT: Quiet background, 15-40% of range
+  // AMBIENT: Light background noise
   if (relative_db < 0.40) {
     return AMBIENT;
   }
 
-  // PARTY: Loud with heavy bass (>40% bass, >65% of range)
-  if (relative_db > 0.65 && bass_ratio > 0.40) {
+  // PARTY: Very loud
+  if (relative_db > 0.75) {
     return PARTY;
   }
 
-  // CONVERSATION: Mid-range dominant (>45% mids)
-  // Speech has strong presence in 500-2000 Hz (mids)
-  if (mids_ratio > 0.45) {
-    return CONVERSATION;
+  // HIGH VOLUME: Check if it's speech or just noise/activity
+  if (relative_db > 0.55) {
+    if (mids_ratio > 0.35) {
+      return CONVERSATION;  // People actively talking
+    } else {
+      return ACTIVE;  // Loud but not speech-heavy (rowdy, movement, etc.)
+    }
   }
 
-  // MUSIC: Balanced spectrum or bass+highs dominant
-  // Music typically has more bass and highs than conversation
-  if (bass_ratio > 0.30 || highs_ratio > 0.30) {
-    return MUSIC;
+  // MODERATE VOLUME: Check if it's conversation or just background
+  if (relative_db > 0.40) {
+    if (mids_ratio > 0.35) {
+      return CONVERSATION;  // Discussion/talking
+    } else {
+      return AMBIENT;  // Just background noise
+    }
   }
 
-  // Default: AMBIENT (shouldn't reach here often)
+  // Default: AMBIENT
   return AMBIENT;
 }
 
@@ -532,7 +543,7 @@ const char* vibeStateToString(VibeState state) {
     case SILENT: return "SILENT";
     case AMBIENT: return "AMBIENT";
     case CONVERSATION: return "CONVERSATION";
-    case MUSIC: return "MUSIC";
+    case ACTIVE: return "ACTIVE";
     case PARTY: return "PARTY";
     default: return "UNKNOWN";
   }
