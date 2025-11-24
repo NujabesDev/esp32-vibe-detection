@@ -1,5 +1,6 @@
 /*
  * SPH0645LM4H I2S MEMS Microphone + FFT Analysis
+ * with Adaptive Auto-Calibration
  *
  * Standard Wiring:
  * BCLK  → GPIO14
@@ -15,6 +16,13 @@
  * - Frequency band detection (Bass, Mids, Highs)
  * - Dominant frequency detection
  * - Peak detection
+ * - Adaptive min/max tracking (auto-calibrates to room)
+ *
+ * Adaptive Calibration Features:
+ * - Automatically learns room's noise floor (min) and typical loudness (max)
+ * - Scales adjust dynamically over time
+ * - Works in both quiet and loud environments
+ * - Prevents scale collapse with minimum range enforcement
  *
  * Requires: arduinoFFT library
  * Open Serial Monitor (115200 baud) for stats
@@ -46,13 +54,16 @@
 #define SAMPLING_FREQ     SAMPLE_RATE
 #define FREQ_BIN_SIZE     (SAMPLING_FREQ / FFT_SIZE)  // ~86 Hz per bin
 
-// FFT Band Scaling (adjust these based on your room's typical levels)
-// To calibrate: Watch the FFT Bands values in serial output
-// - Quiet room: ~5k-20k per band
-// - Normal speech/music: ~50k-150k per band
-// - Loud music/party: ~200k-500k+ per band
-// Set BAND_SCALE_MAX to your "loud but normal" level
-#define BAND_SCALE_MAX    200000.0   // Max energy for full bar
+// Adaptive Calibration Configuration
+#define ADAPTIVE_DECAY      0.9995    // Slow decay for max (0.9995 = ~2000 samples to halve)
+#define ADAPTIVE_RISE       0.9995    // Slow rise for min (mirrors decay)
+#define ADAPTIVE_ATTACK     1.05      // Fast response to increases
+#define MIN_DB_RANGE        20.0      // Minimum dB range (prevents collapse)
+#define MIN_BAND_RANGE      10000.0   // Minimum band energy range
+#define DB_FLOOR            30.0      // Absolute minimum dB
+#define DB_CEILING          100.0     // Absolute maximum dB
+#define BAND_FLOOR          1000.0    // Absolute minimum band energy
+#define BAND_CEILING        500000.0  // Absolute maximum band energy
 
 // Global Variables
 int32_t samples[BUFFER_SIZE];
@@ -60,6 +71,12 @@ size_t bytes_read;
 unsigned long last_display = 0;
 int32_t peak_max = 0;
 int32_t peak_min = 0;
+
+// Adaptive Calibration Tracking
+float adaptive_db_min = 100.0;       // Start high, will adapt down
+float adaptive_db_max = 30.0;        // Start low, will adapt up
+float adaptive_band_min = 500000.0;  // Start high, will adapt down
+float adaptive_band_max = 1000.0;    // Start low, will adapt up
 
 // FFT Arrays
 double vReal[FFT_SIZE];
@@ -117,7 +134,11 @@ void setup() {
   Serial.println("✓ FFT Size: 512 samples");
   Serial.print("✓ Frequency Resolution: ");
   Serial.print(FREQ_BIN_SIZE);
-  Serial.println(" Hz per bin\n");
+  Serial.println(" Hz per bin");
+  Serial.println("✓ Adaptive Calibration: ENABLED");
+  Serial.println("  - Auto-adjusts to room acoustics");
+  Serial.println("  - Tracks min/max for dB and frequency bands");
+  Serial.println("  - Scales adapt over time\n");
   Serial.println("Listening for audio...\n");
 
   delay(500); // Let I2S stabilize
@@ -206,6 +227,67 @@ void loop() {
   // Find dominant frequency (peak)
   double peak_freq = FFT.majorPeak();
 
+  // ===== ADAPTIVE CALIBRATION =====
+  // Update adaptive dB range
+  if (db > 0) {  // Only update with valid readings
+    // Max tracking: decays slowly, jumps up quickly
+    if (db > adaptive_db_max) {
+      adaptive_db_max = db * ADAPTIVE_ATTACK;  // Fast rise
+    } else {
+      adaptive_db_max = adaptive_db_max * ADAPTIVE_DECAY;  // Slow decay
+    }
+
+    // Min tracking: rises slowly, drops quickly
+    if (db < adaptive_db_min) {
+      adaptive_db_min = db;  // Fast drop
+    } else {
+      adaptive_db_min = adaptive_db_min + (100.0 - adaptive_db_min) * (1.0 - ADAPTIVE_RISE);  // Slow rise
+    }
+
+    // Enforce minimum range to prevent collapse
+    float db_range = adaptive_db_max - adaptive_db_min;
+    if (db_range < MIN_DB_RANGE) {
+      // Expand range around current value
+      float center = (adaptive_db_max + adaptive_db_min) / 2.0;
+      adaptive_db_max = center + MIN_DB_RANGE / 2.0;
+      adaptive_db_min = center - MIN_DB_RANGE / 2.0;
+    }
+
+    // Apply absolute bounds
+    adaptive_db_max = constrain(adaptive_db_max, DB_FLOOR, DB_CEILING);
+    adaptive_db_min = constrain(adaptive_db_min, DB_FLOOR, DB_CEILING);
+  }
+
+  // Update adaptive band range
+  float max_band = max(max(bass_energy, mids_energy), highs_energy);
+  float min_band = min(min(bass_energy, mids_energy), highs_energy);
+
+  if (max_band > 0) {
+    // Max tracking: decays slowly, jumps up quickly
+    if (max_band > adaptive_band_max) {
+      adaptive_band_max = max_band * ADAPTIVE_ATTACK;  // Fast rise
+    } else {
+      adaptive_band_max = adaptive_band_max * ADAPTIVE_DECAY;  // Slow decay
+    }
+
+    // Min tracking: rises slowly, drops quickly
+    if (min_band < adaptive_band_min && min_band > 0) {
+      adaptive_band_min = min_band;  // Fast drop
+    } else {
+      adaptive_band_min = adaptive_band_min + (BAND_CEILING - adaptive_band_min) * (1.0 - ADAPTIVE_RISE);  // Slow rise
+    }
+
+    // Enforce minimum range
+    float band_range = adaptive_band_max - adaptive_band_min;
+    if (band_range < MIN_BAND_RANGE) {
+      adaptive_band_max = adaptive_band_min + MIN_BAND_RANGE;
+    }
+
+    // Apply absolute bounds
+    adaptive_band_max = constrain(adaptive_band_max, BAND_FLOOR, BAND_CEILING);
+    adaptive_band_min = constrain(adaptive_band_min, BAND_FLOOR, BAND_CEILING);
+  }
+
   // Display results periodically
   unsigned long now = millis();
   if (now - last_display >= DISPLAY_INTERVAL) {
@@ -229,19 +311,30 @@ void loop() {
     Serial.print(highs_energy, 0);
     Serial.println();
 
-    // Visual bar graph for dB level
-    printBar(db);
+    // Visual bar graph for dB level (adaptive scale)
+    printBar(db, adaptive_db_min, adaptive_db_max);
 
-    // Visual representation of frequency bands (fixed absolute scale)
+    // Visual representation of frequency bands (adaptive scale)
     Serial.print("Freq: [B:");
-    printMiniBar(bass_energy, BAND_SCALE_MAX);
+    printMiniBar(bass_energy, adaptive_band_min, adaptive_band_max);
     Serial.print(" M:");
-    printMiniBar(mids_energy, BAND_SCALE_MAX);
+    printMiniBar(mids_energy, adaptive_band_min, adaptive_band_max);
     Serial.print(" H:");
-    printMiniBar(highs_energy, BAND_SCALE_MAX);
-    Serial.print("] (max=");
-    Serial.print((int)(BAND_SCALE_MAX / 1000));
+    printMiniBar(highs_energy, adaptive_band_min, adaptive_band_max);
+    Serial.print("] (");
+    Serial.print((int)(adaptive_band_min / 1000));
+    Serial.print("-");
+    Serial.print((int)(adaptive_band_max / 1000));
     Serial.println("k)");
+
+    // Calibration status (helps monitor adaptive behavior)
+    float db_range = adaptive_db_max - adaptive_db_min;
+    float band_range = adaptive_band_max - adaptive_band_min;
+    Serial.print("📊 Calibration: dB range=");
+    Serial.print(db_range, 1);
+    Serial.print(" dB | Band range=");
+    Serial.print((int)(band_range / 1000));
+    Serial.println("k");
     Serial.println();
   }
 
@@ -250,22 +343,26 @@ void loop() {
   // Serial.println(samples[0] >> 14);
 }
 
-// Print visual bar graph of audio level
-void printBar(float db) {
+// Print visual bar graph of audio level (adaptive scale)
+void printBar(float db, float db_min, float db_max) {
   Serial.print("[");
-  int bars = map(constrain(db, 30, 100), 30, 100, 0, 40);
+  int bars = map(constrain(db, db_min, db_max), db_min, db_max, 0, 40);
   for (int i = 0; i < bars; i++) {
     Serial.print("=");
   }
   for (int i = bars; i < 40; i++) {
     Serial.print(" ");
   }
-  Serial.println("]");
+  Serial.print("] (");
+  Serial.print(db_min, 0);
+  Serial.print("-");
+  Serial.print(db_max, 0);
+  Serial.println(" dB)");
 }
 
-// Print mini bar graph for frequency bands
-void printMiniBar(float energy, float max_energy) {
-  int bars = map(constrain(energy, 0, max_energy), 0, max_energy, 0, 8);
+// Print mini bar graph for frequency bands (adaptive scale)
+void printMiniBar(float energy, float min_energy, float max_energy) {
+  int bars = map(constrain(energy, min_energy, max_energy), min_energy, max_energy, 0, 8);
   for (int i = 0; i < bars; i++) {
     Serial.print("█");
   }
