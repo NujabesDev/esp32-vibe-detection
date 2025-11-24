@@ -65,14 +65,14 @@ void onDataRecv(const esp_now_recv_info_t *recv_info, const uint8_t *data, int d
   Serial.println(packetCount);
 
   // Print vibe state
-  Serial.print("🎵 Vibe: ");
+  Serial.print("Vibe: ");
   Serial.print(vibeStateToString((VibeState)lastPacket.vibe_state));
   Serial.print(" (");
   Serial.print(lastPacket.vibe_state);
   Serial.println(")");
 
   // Print levels
-  Serial.print("📊 Levels: dB=");
+  Serial.print("Levels: dB=");
   Serial.print(lastPacket.db_percent);
   Serial.print("% | Bass=");
   Serial.print(lastPacket.bass_percent);
@@ -83,17 +83,17 @@ void onDataRecv(const esp_now_recv_info_t *recv_info, const uint8_t *data, int d
   Serial.println("%");
 
   // Print trend
-  Serial.print("📈 Trend: ");
+  Serial.print("Trend: ");
   if (lastPacket.db_delta > 10) {
-    Serial.print("↗ GETTING LOUDER (+");
+    Serial.print("GETTING LOUDER (+");
     Serial.print(lastPacket.db_delta);
     Serial.println(")");
   } else if (lastPacket.db_delta < -10) {
-    Serial.print("↘ GETTING QUIETER (");
+    Serial.print("GETTING QUIETER (");
     Serial.print(lastPacket.db_delta);
     Serial.println(")");
   } else {
-    Serial.print("→ STEADY (");
+    Serial.print("STEADY (");
     Serial.print(lastPacket.db_delta);
     Serial.println(")");
   }
