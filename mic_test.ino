@@ -45,9 +45,8 @@
 #include <esp_now.h>
 
 // ESP-NOW Configuration
-// IMPORTANT: Replace this with your receiver ESP32's MAC address
-// To get MAC address, upload this sketch to receiver and check Serial output
-uint8_t receiverMAC[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};  // Broadcast MAC (replace with actual MAC)
+// Receiver ESP32 MAC address
+uint8_t receiverMAC[] = {0xEC, 0xE3, 0x34, 0x1A, 0x7F, 0x38};
 
 // I2S Configuration - Standard Pins
 #define I2S_WS    15    // LRCL (Word Select)
