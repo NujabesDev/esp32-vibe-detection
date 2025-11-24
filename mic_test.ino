@@ -114,6 +114,37 @@ struct VibePacket {
 float last_db = 0;
 unsigned long last_delta_time = 0;
 
+// Vote-based state smoothing
+#define STATE_HISTORY_SIZE 100  // Number of readings to average (at 100ms intervals = 10 seconds)
+uint8_t state_history[STATE_HISTORY_SIZE];
+int state_history_index = 0;
+bool state_history_filled = false;
+
+// Calculate smoothed vibe state using weighted average voting
+VibeState getSmoothedVibeState() {
+  // Count how many readings we actually have
+  int valid_count = state_history_filled ? STATE_HISTORY_SIZE : state_history_index;
+
+  if (valid_count == 0) {
+    return AMBIENT;  // Default if no history yet
+  }
+
+  // Calculate weighted sum: sum all state values
+  float sum = 0;
+  for (int i = 0; i < valid_count; i++) {
+    sum += state_history[i];
+  }
+
+  // Get the average and round to nearest state
+  float average = sum / valid_count;
+  int smoothed_state = round(average);
+
+  // Clamp to valid range
+  smoothed_state = constrain(smoothed_state, SILENT, PARTY);
+
+  return (VibeState)smoothed_state;
+}
+
 void setup() {
   Serial.begin(115200);
   while (!Serial) delay(10);
@@ -169,8 +200,18 @@ void setup() {
   Serial.println("✓ Adaptive Calibration: ENABLED");
   Serial.println("  - Auto-adjusts to room acoustics");
   Serial.println("  - Tracks min/max for dB and frequency bands");
-  Serial.println("  - Scales adapt over time\n");
+  Serial.println("  - Scales adapt over time");
+  Serial.println("✓ State Smoothing: ENABLED");
+  Serial.print("  - Averaging over ");
+  Serial.print(STATE_HISTORY_SIZE);
+  Serial.println(" readings for stable vibe detection");
+  Serial.println("  - Filters out brief pauses and fluctuations\n");
   Serial.println("Listening for audio...\n");
+
+  // Initialize state history buffer
+  for (int i = 0; i < STATE_HISTORY_SIZE; i++) {
+    state_history[i] = AMBIENT;  // Start with neutral state
+  }
 
   delay(500); // Let I2S stabilize
 }
@@ -357,9 +398,21 @@ void loop() {
     packet.highs_percent = 0;
   }
 
-  // Detect vibe state
-  packet.vibe_state = detectVibe(db, bass_energy, mids_energy, highs_energy,
-                                  adaptive_db_min, adaptive_db_max);
+  // Detect instantaneous vibe state
+  VibeState instant_state = detectVibe(db, bass_energy, mids_energy, highs_energy,
+                                        adaptive_db_min, adaptive_db_max);
+
+  // Store in history buffer (circular buffer)
+  state_history[state_history_index] = instant_state;
+  state_history_index++;
+  if (state_history_index >= STATE_HISTORY_SIZE) {
+    state_history_index = 0;
+    state_history_filled = true;  // We've wrapped around, buffer is full
+  }
+
+  // Get smoothed state using weighted average voting
+  VibeState smoothed_state = getSmoothedVibeState();
+  packet.vibe_state = smoothed_state;
 
   // Display results periodically
   if (now - last_display >= DISPLAY_INTERVAL) {
@@ -412,7 +465,15 @@ void loop() {
     Serial.print(vibeStateToString((VibeState)packet.vibe_state));
     Serial.print(" (");
     Serial.print(packet.vibe_state);
-    Serial.println(")");
+    Serial.print(")");
+
+    // Show instant state for debugging if different
+    if (instant_state != smoothed_state) {
+      Serial.print(" [instant: ");
+      Serial.print(vibeStateToString(instant_state));
+      Serial.print("]");
+    }
+    Serial.println();
 
     Serial.print("Levels (%)  → dB:");
     Serial.print(packet.db_percent);
