@@ -46,6 +46,14 @@
 #define SAMPLING_FREQ     SAMPLE_RATE
 #define FREQ_BIN_SIZE     (SAMPLING_FREQ / FFT_SIZE)  // ~86 Hz per bin
 
+// FFT Band Scaling (adjust these based on your room's typical levels)
+// To calibrate: Watch the FFT Bands values in serial output
+// - Quiet room: ~5k-20k per band
+// - Normal speech/music: ~50k-150k per band
+// - Loud music/party: ~200k-500k+ per band
+// Set BAND_SCALE_MAX to your "loud but normal" level
+#define BAND_SCALE_MAX    200000.0   // Max energy for full bar
+
 // Global Variables
 int32_t samples[BUFFER_SIZE];
 size_t bytes_read;
@@ -224,18 +232,16 @@ void loop() {
     // Visual bar graph for dB level
     printBar(db);
 
-    // Visual representation of frequency bands (dynamically scaled)
-    // Find max energy for relative scaling
-    float max_band_energy = max(bass_energy, max(mids_energy, highs_energy));
-    if (max_band_energy < 1000) max_band_energy = 1000; // Minimum threshold for quiet sounds
-
+    // Visual representation of frequency bands (fixed absolute scale)
     Serial.print("Freq: [B:");
-    printMiniBar(bass_energy, max_band_energy);
+    printMiniBar(bass_energy, BAND_SCALE_MAX);
     Serial.print(" M:");
-    printMiniBar(mids_energy, max_band_energy);
+    printMiniBar(mids_energy, BAND_SCALE_MAX);
     Serial.print(" H:");
-    printMiniBar(highs_energy, max_band_energy);
-    Serial.println("]");
+    printMiniBar(highs_energy, BAND_SCALE_MAX);
+    Serial.print("] (max=");
+    Serial.print((int)(BAND_SCALE_MAX / 1000));
+    Serial.println("k)");
     Serial.println();
   }
 
