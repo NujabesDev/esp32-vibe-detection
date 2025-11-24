@@ -224,13 +224,17 @@ void loop() {
     // Visual bar graph for dB level
     printBar(db);
 
-    // Visual representation of frequency bands
+    // Visual representation of frequency bands (dynamically scaled)
+    // Find max energy for relative scaling
+    float max_band_energy = max(bass_energy, max(mids_energy, highs_energy));
+    if (max_band_energy < 1000) max_band_energy = 1000; // Minimum threshold for quiet sounds
+
     Serial.print("Freq: [B:");
-    printMiniBar(bass_energy, 10000);
+    printMiniBar(bass_energy, max_band_energy);
     Serial.print(" M:");
-    printMiniBar(mids_energy, 10000);
+    printMiniBar(mids_energy, max_band_energy);
     Serial.print(" H:");
-    printMiniBar(highs_energy, 10000);
+    printMiniBar(highs_energy, max_band_energy);
     Serial.println("]");
     Serial.println();
   }
