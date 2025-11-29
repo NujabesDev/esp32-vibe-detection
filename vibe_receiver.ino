@@ -109,8 +109,14 @@ void setup() {
   Serial.println("\n=== ESP32 Vibe Receiver ===\n");
 
   WiFi.mode(WIFI_STA);
+
+  // Get MAC address
+  uint8_t baseMac[6];
+  esp_read_mac(baseMac, ESP_MAC_WIFI_STA);
   Serial.print("✓ MY MAC ADDRESS: ");
-  Serial.println(WiFi.macAddress());
+  Serial.printf("%02X:%02X:%02X:%02X:%02X:%02X\n",
+                baseMac[0], baseMac[1], baseMac[2],
+                baseMac[3], baseMac[4], baseMac[5]);
   Serial.println(">> Copy this to transmitter's receiverMAC[] array <<\n");
 
   if (esp_now_init() != ESP_OK) {
