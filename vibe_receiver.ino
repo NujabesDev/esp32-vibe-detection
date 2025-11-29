@@ -5,6 +5,7 @@
 
 #include <WiFi.h>
 #include <esp_now.h>
+#include <esp_wifi.h>
 #include <Wire.h>
 
 // ========== CONFIGURATION ==========
@@ -109,10 +110,12 @@ void setup() {
   Serial.println("\n=== ESP32 Vibe Receiver ===\n");
 
   WiFi.mode(WIFI_STA);
+  WiFi.begin();  // Initialize WiFi to get MAC
+  delay(100);
 
-  // Get MAC address
+  // Get MAC address using esp_wifi
   uint8_t baseMac[6];
-  esp_read_mac(baseMac, ESP_MAC_WIFI_STA);
+  esp_wifi_get_mac(WIFI_IF_STA, baseMac);
   Serial.print("✓ MY MAC ADDRESS: ");
   Serial.printf("%02X:%02X:%02X:%02X:%02X:%02X\n",
                 baseMac[0], baseMac[1], baseMac[2],
