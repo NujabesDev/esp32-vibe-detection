@@ -112,9 +112,10 @@ const char* vibeStateToString(VibeState state) {
 // ========== UTILITY FUNCTIONS ==========
 
 uint16_t getBarColor(int i) {
-  if (i < 10) return C_BASS;
-  if (i < 21) return C_MIDS;
-  return C_HIGHS;
+  // Match the 3-section grouping: 0-9 bass, 10-20 mids, 21-31 highs
+  if (i < 10) return C_BASS;   // Red/orange
+  if (i < 21) return C_MIDS;   // Yellow
+  return C_HIGHS;              // Blue
 }
 
 // ========== HUMAN SENTIMENT TRACKING ==========
@@ -260,30 +261,25 @@ void updateBottomStats() {
 }
 
 void updateSpectrum() {
-  // Map incoming 3-band data to 32 bars with animation
+  // Simple grouped blocks - honest representation of 3-band data
   for (int i = 0; i < NUM_BARS; i++) {
     int target = 0;
 
-    if (i < 10) { // BASS
+    // Divide bars into 3 equal-ish sections
+    if (i < 10) { // BASS (bars 0-9)
       target = displayPacket.bass_percent;
-      float curve = 1.0 - (abs(i - 5) / 6.0);
-      target = target * curve;
-    } else if (i < 22) { // MIDS
+    } else if (i < 21) { // MIDS (bars 10-20)
       target = displayPacket.mids_percent;
-      float curve = 1.0 - (abs(i - 16) / 8.0);
-      target = target * curve;
-    } else { // HIGHS
+    } else { // HIGHS (bars 21-31)
       target = displayPacket.highs_percent;
-      float curve = 1.0 - (abs(i - 27) / 6.0);
-      target = target * curve;
     }
 
-    // Add subtle random noise for liveliness
-    target += random(-2, 3);
-    target = constrain(target, 2, 100);
+    // Tiny random variation for visual texture (not fake data)
+    target += random(-1, 2);
+    target = constrain(target, 0, 100);
 
-    // Smooth animation: gradually move toward target
-    barHeight[i] = (barHeight[i] * 0.7) + (target * 0.3);
+    // Fast smoothing for real-time response
+    barHeight[i] = (barHeight[i] * 0.2) + (target * 0.8);
   }
 }
 
