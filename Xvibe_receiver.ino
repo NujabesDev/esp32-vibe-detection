@@ -97,6 +97,8 @@ uint8_t numHumanSamples = 0;
 
 // Spectrum analyzer
 float barHeight[NUM_BARS] = {0};
+int targetBarHeight[NUM_BARS] = {0};
+int prevRenderedHeight[NUM_BARS] = {0};
 
 // ========== FUNCTIONS ==========
 const char* vibeStateToString(VibeState state) {
@@ -262,28 +264,33 @@ void updateBottomStats() {
 }
 
 void updateSpectrum() {
-  // Simple grouped blocks - honest representation of 3-band data
+  // Map incoming 3-band data to 32 bars with curve shaping
   for (int i = 0; i < NUM_BARS; i++) {
     float target = 0;
+    int noise = random(-3, 4);
 
-    // Divide bars into 3 equal-ish sections
     if (i < 10) { // BASS (bars 0-9)
       target = displayPacket.bass_percent;
+      // Apply sensitivity boost
+      target *= SPECTRUM_GAIN;
+      // Shape it: Peak in middle of bass section
+      float curve = 1.0 - (abs(i - 5) / 6.0);
+      target = (target * curve) + noise;
     } else if (i < 21) { // MIDS (bars 10-20)
       target = displayPacket.mids_percent;
+      // Apply sensitivity boost
+      target *= SPECTRUM_GAIN;
+      float curve = 1.0 - (abs(i - 16) / 8.0);
+      target = (target * curve) + noise;
     } else { // HIGHS (bars 21-31)
       target = displayPacket.highs_percent;
+      // Apply sensitivity boost
+      target *= SPECTRUM_GAIN;
+      float curve = 1.0 - (abs(i - 27) / 6.0);
+      target = (target * curve) + noise;
     }
 
-    // Apply sensitivity boost
-    target *= SPECTRUM_GAIN;
-
-    // Tiny random variation for visual texture (not fake data)
-    target += random(-1, 2);
-    target = constrain(target, 0, 100);
-
-    // Fast smoothing for real-time response
-    barHeight[i] = (barHeight[i] * 0.2) + (target * 0.8);
+    targetBarHeight[i] = constrain(target, 2, 100);
   }
 }
 
@@ -293,14 +300,26 @@ void drawSpectrumLoop() {
   int startX = 20;
 
   for (int i = 0; i < NUM_BARS; i++) {
-    int x = startX + i * (barW + gap);
-    int h = map((int)barHeight[i], 0, 100, 0, SPECTRUM_H);
-    uint16_t color = getBarColor(i);
+    // Animation Smoothing - interpolate toward target
+    float diff = targetBarHeight[i] - barHeight[i];
+    barHeight[i] += diff * 0.25; // Speed
 
-    // Clear column and draw bar
-    tft.fillRect(x, SPECTRUM_Y - SPECTRUM_H, barW, SPECTRUM_H, C_BG);
-    if (h > 0) {
-      tft.fillRect(x, SPECTRUM_Y - h, barW, h, color);
+    int h = map((int)barHeight[i], 0, 100, 0, SPECTRUM_H);
+
+    // Only redraw if height changed
+    if (h != prevRenderedHeight[i]) {
+      int x = startX + i * (barW + gap);
+      int oldH = prevRenderedHeight[i];
+      uint16_t color = getBarColor(i);
+
+      if (h > oldH) {
+        // Grow: Draw new portion in color
+        tft.fillRect(x, SPECTRUM_Y - h, barW, h - oldH, color);
+      } else {
+        // Shrink: Draw old portion in black
+        tft.fillRect(x, SPECTRUM_Y - oldH, barW, oldH - h, C_BG);
+      }
+      prevRenderedHeight[i] = h;
     }
   }
 }
