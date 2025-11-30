@@ -39,11 +39,11 @@ const int SCREEN_W = 480;
 const int SCREEN_H = 320;
 
 // Screen power control
-const uint16_t SCREEN_ON_DISTANCE = 50;  // Turn screen on if < 50cm
+const uint16_t SCREEN_ON_THRESHOLD = 45;   // Turn screen on if < 45cm
+const uint16_t SCREEN_OFF_THRESHOLD = 55;  // Turn screen off if > 55cm
 
 // Human sentiment tracking
-#define MAX_HUMAN_SAMPLES 100
-#define MAX_DEVICES 8
+#define MAX_HUMAN_SAMPLES 5
 
 // Spectrum analyzer
 const int NUM_BARS = 32;
@@ -70,6 +70,7 @@ struct VibePacket {
 
 // ========== GLOBAL VARIABLES ==========
 VibePacket lastPacket;
+VibePacket displayPacket;  // Safe copy for display rendering
 unsigned long lastReceiveTime = 0;
 unsigned long packetCount = 0;
 unsigned long lastErrorPrint = 0;
@@ -93,16 +94,10 @@ int prevDevices = -1;
 
 // Human sentiment tracking
 uint8_t humanSamples[MAX_HUMAN_SAMPLES];
-uint8_t humanIndex = 0;
 uint8_t numHumanSamples = 0;
 
-// Device tracking (BLE)
-uint8_t knownMacs[MAX_DEVICES][6];
-
 // Spectrum analyzer
-float currentBarHeight[NUM_BARS] = {0};
-int targetBarHeight[NUM_BARS] = {0};
-int prevRenderedHeight[NUM_BARS] = {0};
+int barHeight[NUM_BARS] = {0};
 
 // ========== FUNCTIONS ==========
 const char* vibeStateToString(VibeState state) {
@@ -118,18 +113,6 @@ const char* vibeStateToString(VibeState state) {
 
 // ========== UTILITY FUNCTIONS ==========
 
-void registerDevice(const uint8_t *mac) {
-  for (int i = 0; i < deviceCount; i++) {
-    bool same = true;
-    for (int b = 0; b < 6; b++) if (knownMacs[i][b] != mac[b]) same = false;
-    if (same) return;
-  }
-  if (deviceCount < MAX_DEVICES) {
-    memcpy(knownMacs[deviceCount], mac, 6);
-    deviceCount++;
-  }
-}
-
 uint16_t getBarColor(int i) {
   if (i < 10) return C_BASS;
   if (i < 21) return C_MIDS;
@@ -140,10 +123,18 @@ uint16_t getBarColor(int i) {
 
 void addHumanVibeSample(uint8_t btnVal) {
   if (btnVal < 1 || btnVal > 5) return;
-  humanSamples[humanIndex] = btnVal;
-  humanIndex = (humanIndex + 1) % MAX_HUMAN_SAMPLES;
-  if (numHumanSamples < MAX_HUMAN_SAMPLES)
+
+  // If array is full, shift left to make room
+  if (numHumanSamples >= MAX_HUMAN_SAMPLES) {
+    for (int i = 0; i < MAX_HUMAN_SAMPLES - 1; i++) {
+      humanSamples[i] = humanSamples[i + 1];
+    }
+    humanSamples[MAX_HUMAN_SAMPLES - 1] = btnVal;
+  } else {
+    // Otherwise just append
+    humanSamples[numHumanSamples] = btnVal;
     numHumanSamples++;
+  }
 }
 
 float getAverageHumanVibe() {
@@ -213,20 +204,20 @@ void updateTopDashboard() {
   tft.setTextSize(1);
 
   // 1. dB LEVEL with real db_delta
-  if (lastPacket.db_percent != prevDB || lastPacket.db_delta != prevDelta) {
-    prevDB = lastPacket.db_percent;
-    prevDelta = lastPacket.db_delta;
+  if (displayPacket.db_percent != prevDB || displayPacket.db_delta != prevDelta) {
+    prevDB = displayPacket.db_percent;
+    prevDelta = displayPacket.db_delta;
 
     tft.setTextFont(6);
     tft.setTextDatum(TL_DATUM);
     tft.setTextColor(C_VAL_DB, C_BG);
 
-    int x = tft.drawNumber(lastPacket.db_percent, 15, 40);
+    int x = tft.drawNumber(displayPacket.db_percent, 15, 40);
 
     // Draw real db_delta from packet
     tft.setTextFont(4);
-    String dStr = (lastPacket.db_delta >= 0 ? "+" : "") + String(lastPacket.db_delta);
-    uint16_t dCol = (lastPacket.db_delta >= 0 ? C_VAL_POS : C_VAL_NEG);
+    String dStr = (displayPacket.db_delta >= 0 ? "+" : "") + String(displayPacket.db_delta);
+    uint16_t dCol = (displayPacket.db_delta >= 0 ? C_VAL_POS : C_VAL_NEG);
     tft.setTextColor(dCol, C_BG);
     tft.fillRect(75, 50, 70, 30, C_BG);
     tft.drawString(dStr, 75, 50);
@@ -262,11 +253,11 @@ void updateBottomStats() {
   }
 
   // 2. Computer sentiment (from VibePacket vibe_state)
-  if (lastPacket.vibe_state != prevVibeState) {
-    prevVibeState = lastPacket.vibe_state;
+  if (displayPacket.vibe_state != prevVibeState) {
+    prevVibeState = displayPacket.vibe_state;
 
     const char* states[] = {"SILENT", "AMBIENT", "CONVO", "ACTIVE", "PARTY"};
-    uint8_t s = (lastPacket.vibe_state > 4) ? 0 : lastPacket.vibe_state;
+    uint8_t s = (displayPacket.vibe_state > 4) ? 0 : displayPacket.vibe_state;
 
     tft.setTextFont(4);
     tft.setTextDatum(TR_DATUM);
@@ -278,25 +269,24 @@ void updateBottomStats() {
 }
 
 void updateSpectrum() {
-  // Map incoming 3-band data to 32 bars with noise
+  // Map incoming 3-band data to 32 bars
   for (int i = 0; i < NUM_BARS; i++) {
-    int target = 0;
-    int noise = random(-3, 4);
+    int value = 0;
 
     if (i < 10) { // BASS
-      target = lastPacket.bass_percent;
+      value = displayPacket.bass_percent;
       float curve = 1.0 - (abs(i - 5) / 6.0);
-      target = (target * curve) + noise;
+      value = value * curve;
     } else if (i < 22) { // MIDS
-      target = lastPacket.mids_percent;
+      value = displayPacket.mids_percent;
       float curve = 1.0 - (abs(i - 16) / 8.0);
-      target = (target * curve) + noise;
+      value = value * curve;
     } else { // HIGHS
-      target = lastPacket.highs_percent;
+      value = displayPacket.highs_percent;
       float curve = 1.0 - (abs(i - 27) / 6.0);
-      target = (target * curve) + noise;
+      value = value * curve;
     }
-    targetBarHeight[i] = constrain(target, 2, 100);
+    barHeight[i] = constrain(value, 2, 100);
   }
 }
 
@@ -306,35 +296,27 @@ void drawSpectrumLoop() {
   int startX = 20;
 
   for (int i = 0; i < NUM_BARS; i++) {
-    // Animation smoothing
-    float diff = targetBarHeight[i] - currentBarHeight[i];
-    currentBarHeight[i] += diff * 0.25;
+    int x = startX + i * (barW + gap);
+    int h = map(barHeight[i], 0, 100, 0, SPECTRUM_H);
+    uint16_t color = getBarColor(i);
 
-    int h = map((int)currentBarHeight[i], 0, 100, 0, SPECTRUM_H);
-
-    if (h != prevRenderedHeight[i]) {
-      int x = startX + i * (barW + gap);
-      int oldH = prevRenderedHeight[i];
-      uint16_t color = getBarColor(i);
-
-      if (h > oldH) {
-        tft.fillRect(x, SPECTRUM_Y - h, barW, h - oldH, color);
-      } else {
-        tft.fillRect(x, SPECTRUM_Y - oldH, barW, oldH - h, C_BG);
-      }
-      prevRenderedHeight[i] = h;
+    // Clear column and draw bar
+    tft.fillRect(x, SPECTRUM_Y - SPECTRUM_H, barW, SPECTRUM_H, C_BG);
+    if (h > 0) {
+      tft.fillRect(x, SPECTRUM_Y - h, barW, h, color);
     }
   }
 }
 
 void updateScreenPower() {
-  bool shouldBeOn = (ultrasonicDistance > 0 && ultrasonicDistance < SCREEN_ON_DISTANCE);
+  if (ultrasonicDistance == 0) return;  // Ignore invalid readings
 
-  if (shouldBeOn && !screenOn) {
+  // Hysteresis: turn on at <45cm, turn off at >55cm
+  if (!screenOn && ultrasonicDistance < SCREEN_ON_THRESHOLD) {
     tft.writecommand(0x29);  // Display ON
     screenOn = true;
     Serial.println("Screen ON");
-  } else if (!shouldBeOn && screenOn) {
+  } else if (screenOn && ultrasonicDistance > SCREEN_OFF_THRESHOLD) {
     tft.writecommand(0x28);  // Display OFF
     screenOn = false;
     Serial.println("Screen OFF");
@@ -352,9 +334,6 @@ void onDataRecv(const esp_now_recv_info_t *recv_info, const uint8_t *data, int d
   memcpy(&lastPacket, data, sizeof(VibePacket));
   lastReceiveTime = millis();
   packetCount++;
-
-  // Update spectrum display targets
-  updateSpectrum();
 
   // Forward to all Arduinos via I2C
   #if ENABLE_I2C_FORWARD
@@ -492,7 +471,6 @@ void loop() {
 
   if (packetCount > 0 && (millis() - lastReceiveTime) > 5000) {
     Serial.println("WARNING: No packets in 5 seconds");
-    delay(1000);
   }
 
   // Request button and ultrasonic data from Arduino every 100ms
@@ -512,8 +490,14 @@ void loop() {
     deviceCount = bleCount;
   }
 
+  // Safely copy packet data for display (prevent race condition)
+  noInterrupts();
+  memcpy(&displayPacket, &lastPacket, sizeof(VibePacket));
+  interrupts();
+
   // Update display (only if screen is on)
   if (screenOn) {
+    updateSpectrum();
     updateTopDashboard();
     updateBottomStats();
     drawSpectrumLoop();
