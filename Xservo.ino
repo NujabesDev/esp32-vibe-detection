@@ -9,7 +9,6 @@ struct VibePacket {
   uint8_t mids_percent;
   uint8_t highs_percent;
   uint8_t vibe_state;
-  int8_t  db_delta;
 } __attribute__((packed));
 
 volatile VibePacket pkt;   // received packet from master
