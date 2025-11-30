@@ -16,9 +16,9 @@
 // Multiple Arduino slave addresses
 #define ARDUINO_1_ADDRESS 0x08
 #define ARDUINO_2_ADDRESS 0x09
-#define ARDUINO_3_ADDRESS 0x0A
-const uint8_t arduinoAddresses[] = {ARDUINO_1_ADDRESS, ARDUINO_2_ADDRESS, ARDUINO_3_ADDRESS};
-const int numArduinos = 3;
+// #define ARDUINO_3_ADDRESS 0x0A
+const uint8_t arduinoAddresses[] = {ARDUINO_1_ADDRESS, ARDUINO_2_ADDRESS};
+const int numArduinos = 2;
 
 // ========== DATA STRUCTURES ==========
 enum VibeState {
@@ -158,7 +158,7 @@ void setup() {
     Serial.print(", 0x");
     Serial.print(ARDUINO_2_ADDRESS, HEX);
     Serial.print(", 0x");
-    Serial.println(ARDUINO_3_ADDRESS, HEX);
+    // Serial.println(ARDUINO_3_ADDRESS, HEX);
   #else
     Serial.println("✓ I2C forwarding disabled");
   #endif
@@ -193,7 +193,7 @@ void loop() {
 
   // Request button data from all Arduinos every 100ms
   #if ENABLE_I2C_FORWARD
-    requestButtonData();
+    // requestButtonData();  // Disabled - causes I2C NACK errors if Arduinos don't have onRequest handler
   #endif
 
   delay(100);
