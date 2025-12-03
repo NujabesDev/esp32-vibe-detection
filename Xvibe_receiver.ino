@@ -19,8 +19,8 @@
 #define ARDUINO_1_ADDRESS 0x08  // Buttons/Ultrasonic
 #define ARDUINO_2_ADDRESS 0x09  // Servo
 #define ARDUINO_3_ADDRESS 0x0B  // LED
-const uint8_t arduinoAddresses[] = {ARDUINO_1_ADDRESS, ARDUINO_2_ADDRESS, ARDUINO_3_ADDRESS};
-const int numArduinos = 3;
+const uint8_t arduinoAddresses[] = {ARDUINO_2_ADDRESS, ARDUINO_3_ADDRESS};  
+const int numArduinos = 2;  
 
 // ========== DISPLAY CONFIGURATION ==========
 // TFT Display Colors
