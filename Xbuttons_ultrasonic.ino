@@ -58,7 +58,7 @@ void loop() {
   handleUltrasonic();
   #endif
   
-  delay(10); // Small delay to avoid flooding Serial
+  delay(10);
 }
 
 // ======= BUTTON HANDLER =======
@@ -66,7 +66,6 @@ void handleButtons() {
   for(int i=0;i<5;i++){
     int reading = digitalRead(buttonPins[i]);
     if(reading != lastButtonState[i]) lastDebounceTime[i] = millis();
-    
     if((millis() - lastDebounceTime[i]) > debounceDelay){
       if(reading == LOW && buttonState[i] == HIGH){
         lastButtonPressed = i+1;
@@ -86,15 +85,12 @@ void handleUltrasonic(){
   unsigned long now = millis();
   if(now - lastUltrasonicRead >= 200){
     lastUltrasonicRead = now;
-    
     digitalWrite(trigPin, LOW); delayMicroseconds(2);
     digitalWrite(trigPin, HIGH); delayMicroseconds(10);
     digitalWrite(trigPin, LOW);
-    
     duration = pulseIn(echoPin,HIGH);
     distance = duration*0.0343/2;
     lastDistance = distance;
-    
     Serial.print("Distance: "); Serial.print(distance); Serial.println(" cm");
   }
 }
@@ -102,21 +98,4 @@ void handleUltrasonic(){
 
 // Called when ESP32 sends a byte (command)
 void receiveEvent(int howMany){
-  if(howMany >= 1){
-    i2cCommand = Wire.read(); // 1 = button, 2 = distance
-    while(Wire.available()) Wire.read(); // flush extra
-  }
-}
-
-// Called when ESP32 requests data
-void requestEvent(){
-  if(i2cCommand == 1){
-    Wire.write(lastButtonPressed);
-    lastButtonPressed = 0;
-  }
-  else if(i2cCommand == 2){
-    Wire.write((uint8_t)(lastDistance & 0xFF));        // LSB
-    Wire.write((uint8_t)((lastDistance >> 8) & 0xFF)); // MSB
-  }
-  i2cCommand = 0; // reset
-}
+  if
